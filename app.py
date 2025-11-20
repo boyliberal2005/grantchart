@@ -1,31 +1,21 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 
-# Cấu hình trang
-st.set_page_config(page_title="Ứng dụng Tạo Biểu Đồ Gantt", layout="wide")
+st.set_page_config(page_title="Biểu đồ Gantt Chuẩn", layout="wide")
+st.title("📊 Biểu đồ Gantt (Giữ nguyên thứ tự Excel)")
 
-st.title("📊 Ứng dụng Tạo Biểu Đồ Gantt từ Excel")
-st.markdown("Upload file dữ liệu dự án của bạn để tạo biểu đồ tự động.")
-
-# 1. Upload File
-uploaded_file = st.file_uploader("Chọn file Excel hoặc CSV của bạn", type=['xlsx', 'csv'])
+uploaded_file = st.file_uploader("Upload file Excel/CSV", type=['xlsx', 'csv'])
 
 if uploaded_file is not None:
     try:
-        # 2. Xử lý dữ liệu
-        # Dựa vào file mẫu, dữ liệu thật thường bắt đầu sau dòng tiêu đề chung.
-        # Ta sẽ thử đọc và tìm dòng chứa chữ "WBS" hoặc "Task" để làm header.
-        
+        # --- 1. XỬ LÝ FILE (Giống bước trước nhưng kỹ hơn về header) ---
         if uploaded_file.name.endswith('.csv'):
-            # Đọc thử file csv để tìm header
             df_raw = pd.read_csv(uploaded_file, header=None)
         else:
-            # Đọc thử file excel
             df_raw = pd.read_excel(uploaded_file, header=None)
 
-        # Tìm dòng chứa header thực sự (Dòng có chứa cột 'Task' hoặc 'Start')
+        # Tìm dòng header
         header_row_index = -1
         for i, row in df_raw.iterrows():
             row_values = row.astype(str).str.lower().tolist()
@@ -34,9 +24,9 @@ if uploaded_file is not None:
                 break
         
         if header_row_index == -1:
-            st.error("Không tìm thấy tiêu đề cột (Task, Start, End) trong file. Vui lòng kiểm tra lại định dạng.")
+            st.error("Không tìm thấy cột Task/Start. Vui lòng kiểm tra file.")
         else:
-            # Đọc lại file với header đúng
+            # Đọc lại file với header chuẩn
             if uploaded_file.name.endswith('.csv'):
                 uploaded_file.seek(0)
                 df = pd.read_csv(uploaded_file, header=header_row_index)
@@ -44,85 +34,78 @@ if uploaded_file is not None:
                 uploaded_file.seek(0)
                 df = pd.read_excel(uploaded_file, header=header_row_index)
 
-            # 3. Làm sạch dữ liệu
-            # Chuyển đổi cột ngày tháng
-            # Cần đảm bảo tên cột khớp với file của bạn (Start, End, Task, Lead, % Done)
-            # Xử lý tên cột có thể bị khoảng trắng
+            # Chuẩn hóa tên cột
             df.columns = df.columns.str.strip()
-            
-            # Lọc bỏ các dòng trống quan trọng
             df = df.dropna(subset=['Task', 'Start', 'End'])
 
-            # Convert sang datetime
+            # Convert ngày tháng
             df['Start'] = pd.to_datetime(df['Start'], errors='coerce')
             df['End'] = pd.to_datetime(df['End'], errors='coerce')
             
-            # Loại bỏ các dòng convert ngày lỗi (như dòng Kick-off 1899 trong file mẫu)
+            # Lọc lỗi ngày tháng (năm 1899...)
             df = df[df['Start'].dt.year > 1900]
             df = df[df['End'].dt.year > 1900]
 
-            # Tạo cột nhãn hiển thị (kết hợp WBS và Tên Task)
+            # Tạo cột nhãn (WBS + Task)
             if 'WBS' in df.columns:
-                 df['Task_Label'] = df['WBS'].astype(str) + " - " + df['Task']
+                 df['Task_Label'] = df['WBS'].astype(str) + ". " + df['Task']
             else:
                  df['Task_Label'] = df['Task']
 
-            # Xử lý cột % Hoàn thành để tô màu (nếu cần)
-            if '% Done' in df.columns:
-                df['% Done'] = pd.to_numeric(df['% Done'], errors='coerce').fillna(0)
+            # --- 2. QUAN TRỌNG: GIỮ THỨ TỰ VÀ TẠO "SONG SONG" ---
+            
+            # Đảo ngược thứ tự DataFrame để khi vẽ lên biểu đồ
+            # Task đầu tiên trong Excel sẽ nằm trên cùng (trục Y của biểu đồ vẽ từ dưới lên)
+            df = df.iloc[::-1] 
 
-            # 4. Vẽ Biểu Đồ (Gantt Chart)
-            st.subheader("Biểu đồ tiến độ dự án (Gantt Chart)")
+            # Tính toán độ dài công việc (để hiển thị text bên cạnh nếu cần)
+            df['Duration'] = (df['End'] - df['Start']).dt.days
 
-            # Sắp xếp để Task đầu tiên nằm trên cùng
-            df = df.sort_values(by='Start', ascending=False) 
-
+            # --- 3. VẼ BIỂU ĐỒ ---
             fig = px.timeline(
                 df, 
                 x_start="Start", 
                 x_end="End", 
                 y="Task_Label",
-                color="Lead" if "Lead" in df.columns else None, # Tô màu theo người phụ trách
-                hover_data=["Start", "End", "% Done"] if "% Done" in df.columns else ["Start", "End"],
-                title="Tiến độ dự án",
-                height=800 # Chiều cao biểu đồ
+                color="Lead" if "Lead" in df.columns else None,
+                text="Duration", # Hiển thị số ngày trên thanh bar luôn cho dễ nhìn
+                hover_data=["Start", "End"],
+                height=40 * len(df) + 100 # Tự động chỉnh chiều cao biểu đồ theo số lượng task
             )
 
-            # Tinh chỉnh giao diện biểu đồ cho giống hình mẫu
-            fig.update_yaxes(autorange="reversed") # Đảo ngược trục Y để task 1 lên đầu
+            fig.update_traces(
+                texttemplate='%{text} ngày', # Hiển thị chữ "X ngày" trên thanh
+                textposition='inside' # Chữ nằm trong thanh bar
+            )
+
+            # Tinh chỉnh Layout cho giống Excel
             fig.update_layout(
-                xaxis_title="Thời gian",
-                yaxis_title="Hạng mục công việc",
-                bargap=0.2,
+                title_text='Tiến độ dự án',
+                xaxis_title='Thời gian',
+                yaxis_title=None, # Ẩn tiêu đề trục Y cho đỡ rối
+                bargap=0.3, # Khoảng cách giữa các thanh
+                yaxis=dict(
+                    type='category', # Bắt buộc hiển thị tất cả tên Task
+                    automargin=True,
+                    tickfont=dict(size=13) # Cỡ chữ tên Task
+                ),
                 xaxis=dict(
-                    tickformat="%d-%m-%Y",
-                    gridcolor='lightgray'
-                )
+                    side='top', # Đưa ngày tháng lên trên cùng (giống Excel/MS Project)
+                    tickformat="%d-%m",
+                    gridcolor='lightgrey', # Kẻ lưới dọc
+                    dtick="M1" # Hiển thị grid theo từng tháng (hoặc để auto)
+                ),
+                plot_bgcolor='white' # Nền trắng cho sạch
             )
             
-            # Hiển thị thanh % hoàn thành (Mẹo nâng cao: vẽ thêm một lớp bar chart mờ nếu cần)
-            # Ở đây dùng bản timeline chuẩn của Plotly cho rõ ràng.
+            # Thêm đường kẻ ngang mờ để dóng hàng (giống dòng kẻ trong Excel)
+            fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='lightgrey')
 
             st.plotly_chart(fig, use_container_width=True)
-
-            # 5. Hiển thị dữ liệu dạng bảng bên dưới
-            with st.expander("Xem dữ liệu chi tiết"):
-                st.dataframe(df)
+            
+            with st.expander("Xem dữ liệu bảng"):
+                # Hiển thị bảng gốc nhưng đảo lại cho đúng chiều mắt đọc
+                st.dataframe(df.iloc[::-1])
 
     except Exception as e:
-        st.error(f"Có lỗi xảy ra khi đọc file: {e}")
-        st.info("Hãy đảm bảo file của bạn có cấu trúc giống file mẫu '1.xlsx' bạn đã cung cấp.")
-
-else:
-    st.info("Vui lòng upload file để bắt đầu.")
-    
-    # Hiển thị hướng dẫn định dạng
-    st.markdown("""
-    **Yêu cầu định dạng file Excel/CSV:**
-    File cần có các cột tiêu đề (ở bất kỳ dòng nào):
-    - `Task` (Tên công việc)
-    - `Start` (Ngày bắt đầu - định dạng yyyy-mm-dd)
-    - `End` (Ngày kết thúc)
-    - `Lead` (Người phụ trách - Tùy chọn, dùng để tô màu)
-    - `WBS` (Mã công việc - Tùy chọn)
-    """)
+        st.error(f"Lỗi: {e}")
