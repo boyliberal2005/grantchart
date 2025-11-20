@@ -3,150 +3,180 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 
-# Cấu hình trang rộng để hiển thị biểu đồ đẹp hơn
-st.set_page_config(page_title="Timeline Project", layout="wide")
-st.title("📊 Biểu đồ Tiến độ (Style: Chữ trên - Bar dưới)")
+st.set_page_config(page_title="Biểu đồ Gantt Chuyên nghiệp", layout="wide")
+st.title("📊 Tạo Biểu đồ Timeline (Tùy chỉnh cột)")
 
-# CSS để ẩn bớt padding thừa của Streamlit
+# --- CẤU HÌNH CSS ĐỂ GIAO DIỆN SÁT VỚI HÌNH MẪU ---
 st.markdown("""
 <style>
-    .block-container {padding-top: 1rem; padding-bottom: 0rem;}
+    .block-container {padding-top: 1rem; padding-bottom: 2rem;}
+    div[data-testid="stExpander"] details summary p {font-weight: bold; font-size: 1.1rem;}
 </style>
 """, unsafe_allow_html=True)
 
-uploaded_file = st.file_uploader("Upload file Excel/CSV", type=['xlsx', 'csv'])
+# 1. UPLOAD FILE
+uploaded_file = st.file_uploader("Bước 1: Upload file Excel/CSV của bạn", type=['xlsx', 'csv'])
 
 if uploaded_file is not None:
     try:
-        # --- 1. XỬ LÝ FILE THÔNG MINH ---
-        # Logic: Tìm dòng chứa chữ "Task" và "Start" để làm header
+        # --- 2. ĐỌC DỮ LIỆU THÔ ---
+        # Đọc thử 10 dòng đầu tiên để tìm header
         if uploaded_file.name.endswith('.csv'):
-            df_raw = pd.read_csv(uploaded_file, header=None)
+            df_preview = pd.read_csv(uploaded_file, header=None, nrows=15)
         else:
-            df_raw = pd.read_excel(uploaded_file, header=None)
+            df_preview = pd.read_excel(uploaded_file, header=None, nrows=15)
 
-        header_row = -1
-        for i, row in df_raw.iterrows():
-            row_str = row.astype(str).str.lower().tolist()
-            if 'task' in row_str and 'start' in row_str:
-                header_row = i
-                break
+        st.info("👇 Hãy nhìn bảng dưới và chọn đúng dòng chứa tiêu đề cột (Task, Start, End)")
         
-        if header_row == -1:
-            st.error("Không tìm thấy dòng tiêu đề (Task, Start). Hãy kiểm tra file.")
+        # Cho người dùng chọn dòng Header
+        header_row_idx = st.number_input(
+            "Nhập số thứ tự dòng chứa tiêu đề (Header) trong bảng trên:", 
+            min_value=0, 
+            max_value=14, 
+            value=0, 
+            step=1,
+            help="Nhìn vào bảng dữ liệu thô bên dưới, dòng nào chứa chữ Task, Start, End thì nhập số đó vào đây."
+        )
+
+        st.write("Dữ liệu thô (dòng 0 - 14):")
+        st.dataframe(df_preview)
+
+        # --- 3. ĐỌC LẠI FILE VỚI HEADER ĐÃ CHỌN ---
+        if uploaded_file.name.endswith('.csv'):
+            uploaded_file.seek(0)
+            df = pd.read_csv(uploaded_file, header=header_row_idx)
         else:
-            # Đọc lại dữ liệu từ dòng header tìm được
-            if uploaded_file.name.endswith('.csv'):
-                uploaded_file.seek(0)
-                df = pd.read_csv(uploaded_file, header=header_row)
+            uploaded_file.seek(0)
+            df = pd.read_excel(uploaded_file, header=header_row_idx)
+
+        # --- 4. CHỌN CỘT DỮ LIỆU (QUAN TRỌNG ĐỂ KHÔNG BỊ LỖI TRỐNG) ---
+        st.divider()
+        st.subheader("Bước 2: Xác định cột dữ liệu")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        all_columns = df.columns.tolist()
+        
+        # Tự động gợi ý cột nếu tên giống
+        default_task = next((x for x in all_columns if "task" in str(x).lower() or "việc" in str(x).lower()), all_columns[0])
+        default_start = next((x for x in all_columns if "start" in str(x).lower() or "bắt đầu" in str(x).lower()), all_columns[1] if len(all_columns)>1 else all_columns[0])
+        default_end = next((x for x in all_columns if "end" in str(x).lower() or "kết thúc" in str(x).lower() or "finish" in str(x).lower()), all_columns[2] if len(all_columns)>2 else all_columns[0])
+        default_wbs = next((x for x in all_columns if "wbs" in str(x).lower()), "Không dùng")
+
+        with col1:
+            col_task = st.selectbox("Cột Tên công việc (Task):", all_columns, index=all_columns.index(default_task))
+        with col2:
+            col_start = st.selectbox("Cột Ngày bắt đầu:", all_columns, index=all_columns.index(default_start))
+        with col3:
+            col_end = st.selectbox("Cột Ngày kết thúc:", all_columns, index=all_columns.index(default_end))
+        with col4:
+            col_wbs = st.selectbox("Cột Mã WBS (Tùy chọn):", ["Không dùng"] + all_columns, index=0 if default_wbs == "Không dùng" else ["Không dùng"] + all_columns.index(default_wbs)+1)
+
+        # --- 5. XỬ LÝ DỮ LIỆU ---
+        # Đổi tên cột về chuẩn để xử lý
+        df_chart = df.copy()
+        df_chart = df_chart.rename(columns={col_task: 'Task', col_start: 'Start', col_end: 'End'})
+        
+        if col_wbs != "Không dùng":
+            df_chart = df_chart.rename(columns={col_wbs: 'WBS'})
+
+        # Convert ngày tháng
+        df_chart['Start'] = pd.to_datetime(df_chart['Start'], errors='coerce')
+        df_chart['End'] = pd.to_datetime(df_chart['End'], errors='coerce')
+        
+        # Lọc bỏ dòng không có ngày tháng
+        df_clean = df_chart.dropna(subset=['Start', 'End'])
+        
+        # Lọc lỗi năm 1899
+        df_clean = df_clean[df_clean['Start'].dt.year > 1900]
+        df_clean = df_clean[df_clean['End'].dt.year > 1900]
+
+        if df_clean.empty:
+            st.error("⚠️ Không có dữ liệu hợp lệ sau khi lọc ngày tháng! Vui lòng kiểm tra lại cột Ngày bắt đầu/Kết thúc.")
+        else:
+            # Tạo nhãn hiển thị
+            if 'WBS' in df_clean.columns:
+                df_clean['Task_Label'] = df_clean['WBS'].astype(str) + ". " + df_clean['Task'].astype(str)
             else:
-                uploaded_file.seek(0)
-                df = pd.read_excel(uploaded_file, header=header_row)
+                df_clean['Task_Label'] = df_clean['Task'].astype(str)
 
-            # Chuẩn hóa tên cột
-            df.columns = df.columns.str.strip()
-            
-            # Lọc bỏ dòng trống quan trọng
-            df = df.dropna(subset=['Task', 'Start', 'End'])
+            # Đảo ngược thứ tự để Task đầu tiên nằm trên cùng
+            df_clean = df_clean.iloc[::-1].reset_index(drop=True)
 
-            # Convert ngày tháng
-            df['Start'] = pd.to_datetime(df['Start'], errors='coerce')
-            df['End'] = pd.to_datetime(df['End'], errors='coerce')
-            
-            # Loại bỏ dữ liệu lỗi (năm 1899, 1900...)
-            df = df[df['Start'].dt.year > 1900]
-            df = df[df['End'].dt.year > 1900]
+            # --- 6. VẼ BIỂU ĐỒ (STYLE: CHỮ TRÊN - BAR DƯỚI) ---
+            st.divider()
+            st.subheader("Kết quả biểu đồ:")
 
-            # Tạo nhãn Task (WBS + Tên)
-            if 'WBS' in df.columns:
-                 df['Task_Label'] = df['WBS'].astype(str) + ". " + df['Task']
-            else:
-                 df['Task_Label'] = df['Task']
-
-            # Đảo ngược dataframe để Task 1 nằm trên cùng khi vẽ
-            df = df.iloc[::-1].reset_index(drop=True)
-
-            # --- 2. VẼ BIỂU ĐỒ (CUSTOM LAYOUT) ---
             fig = go.Figure()
-
-            # Tạo bảng màu
-            colors = px.colors.qualitative.Set2  # Dùng bảng màu Set2 cho dịu mắt
             
-            # Duyệt qua từng task để vẽ
-            for i, row in df.iterrows():
-                # Xác định màu (nếu có cột Lead thì theo Lead, không thì random)
+            # Bảng màu đẹp
+            colors = px.colors.qualitative.Pastel  
+
+            for i, row in df_clean.iterrows():
                 color = colors[i % len(colors)]
-                
                 duration = (row['End'] - row['Start']).days
-                if duration <= 0: duration = 1 # Tối thiểu 1 ngày để hiển thị
+                if duration <= 0: duration = 1
 
-                # 2.1. VẼ THANH BAR (NẰM DƯỚI)
-                # Lưu ý: 'width' trong bar ngang chính là độ dày của thanh
+                # 1. VẼ THANH BAR (Mỏng, nằm dưới)
                 fig.add_trace(go.Bar(
-                    y=[i],                  # Vị trí dòng thứ i
-                    x=[duration],           # Chiều dài thanh
-                    base=[row['Start']],    # Điểm bắt đầu
-                    orientation='h',        # Nằm ngang
-                    marker=dict(color=color, opacity=0.9),
-                    name=row['Task_Label'],
-                    width=0.3,              # ĐỘ DÀY THANH BAR (Mỏng lại để nhường chỗ cho chữ)
+                    y=[i],
+                    x=[duration],
+                    base=[row['Start']],
+                    orientation='h',
+                    marker=dict(color=color, opacity=1.0, line=dict(width=0)), # Màu đậm, không viền
+                    width=0.25,  # ĐỘ DÀY THANH BAR (Rất mỏng để giống hình mẫu)
                     hoverinfo='text',
-                    hovertext=f"<b>{row['Task_Label']}</b><br>Start: {row['Start'].strftime('%d/%m/%Y')}<br>End: {row['End'].strftime('%d/%m/%Y')}"
+                    hovertext=f"<b>{row['Task_Label']}</b><br>{row['Start'].strftime('%d/%m')} - {row['End'].strftime('%d/%m')}",
+                    showlegend=False
                 ))
 
-                # 2.2. VẼ TÊN TASK (NẰM TRÊN BAR)
-                # Dùng Scatter Text để đặt chữ chính xác lên trên thanh bar
+                # 2. VẼ CHỮ (Nằm hẳn lên trên thanh Bar)
                 fig.add_trace(go.Scatter(
-                    x=[row['Start']],       # Chữ bắt đầu tại ngày Start
-                    y=[i + 0.3],            # Đẩy chữ lên trên thanh bar (Offset trục Y)
-                    text=[f"<b>{row['Task_Label']}</b>"], # In đậm tên Task
+                    x=[row['Start']], 
+                    y=[i + 0.3], # Đẩy chữ lên cao hơn thanh bar 0.3 đơn vị
+                    text=[f"<b>{row['Task_Label']}</b>"],
                     mode='text',
-                    textposition='middle right', # Căn lề: Chữ chạy sang phải từ điểm Start
-                    textfont=dict(size=14, color='#333333'), # Font chữ to, rõ
-                    hoverinfo='skip'        # Không hiện popup khi rê chuột vào chữ
+                    textposition='middle right', # Canh lề trái (từ điểm start chạy sang phải)
+                    textfont=dict(size=14, color='#2c3e50', family="Arial"), # Font đen đậm
+                    showlegend=False,
+                    hoverinfo='skip'
                 ))
 
-            # --- 3. TINH CHỈNH GIAO DIỆN (CHO GIỐNG HÌNH MẪU) ---
+            # Cấu hình trục và khung
             fig.update_layout(
-                height=60 * len(df) + 100, # Tự động chỉnh chiều cao: 60px mỗi dòng
+                height=60 * len(df_clean) + 100, # Chiều cao tự động
                 xaxis=dict(
-                    side='top',            # Đưa ngày tháng lên trên đầu
-                    tickformat="%d-%m",    # Định dạng ngày/tháng
-                    gridcolor='#eeeeee',   # Màu lưới dọc nhạt
+                    side='top', # Ngày tháng nằm trên cùng
+                    tickformat="%d-%m",
+                    gridcolor='#f0f0f0', # Lưới dọc rất mờ
                     tickfont=dict(size=12, color='grey'),
                     zeroline=False
                 ),
                 yaxis=dict(
-                    showticklabels=False,  # Tắt nhãn trục Y bên trái (vì tên task đã ở trên bar rồi)
-                    showgrid=False,        # Tắt lưới ngang mặc định
-                    range=[-0.5, len(df)], # Căn lề trên dưới
+                    showticklabels=False, # Ẩn trục trái
+                    showgrid=False, 
+                    range=[-0.5, len(df_clean)],
                     zeroline=False
                 ),
-                showlegend=False,          # Tắt chú giải
-                plot_bgcolor='white',      # Nền trắng sạch
-                margin=dict(l=10, r=10, t=80, b=10), # Căn lề sát biên
-                hovermode="closest"
+                plot_bgcolor='white',
+                margin=dict(l=20, r=20, t=80, b=20),
+                bargap=0.0
             )
 
-            # Kẻ đường phân cách giữa các Task (Nét đứt mờ)
-            # Giúp người xem phân biệt rõ từng cụm "Chữ + Bar"
-            for i in range(len(df)):
+            # Kẻ dòng kẻ ngang mờ phân cách các task
+            for i in range(len(df_clean)):
                 fig.add_shape(type="line",
-                    x0=df['Start'].min(), 
-                    y0=i - 0.5, 
-                    x1=df['End'].max(), 
-                    y1=i - 0.5,
-                    line=dict(color="#e0e0e0", width=1, dash="dot"),
+                    x0=df_clean['Start'].min(), y0=i - 0.4, 
+                    x1=df_clean['End'].max(), y1=i - 0.4,
+                    line=dict(color="#eeeeee", width=1),
                     layer="below"
                 )
 
-            # Hiển thị biểu đồ
             st.plotly_chart(fig, use_container_width=True)
 
-            # Hiển thị bảng dữ liệu thô (đã sắp xếp lại đúng chiều đọc)
-            with st.expander("Xem dữ liệu chi tiết"):
-                st.dataframe(df.iloc[::-1])
-
     except Exception as e:
-        st.error(f"Có lỗi xảy ra: {e}")
-        st.write("Vui lòng kiểm tra file Excel có đúng định dạng cột Task, Start, End chưa.")
+        st.error(f"Lỗi hệ thống: {e}")
+        st.write("Hãy kiểm tra xem file Excel có chứa công thức bị lỗi (#REF, #NAME) không.")
+
+else:
+    st.info("Vui lòng upload file để bắt đầu.")
