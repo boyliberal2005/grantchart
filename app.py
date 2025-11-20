@@ -10,7 +10,7 @@ uploaded_file = st.file_uploader("Upload file Excel/CSV", type=['xlsx', 'csv'])
 
 if uploaded_file is not None:
     try:
-        # --- 1. XỬ LÝ FILE (Giữ nguyên logic làm sạch dữ liệu) ---
+        # --- 1. XỬ LÝ FILE ---
         if uploaded_file.name.endswith('.csv'):
             df_raw = pd.read_csv(uploaded_file, header=None)
         else:
@@ -35,8 +35,12 @@ if uploaded_file is not None:
 
             df.columns = df.columns.str.strip()
             df = df.dropna(subset=['Task', 'Start', 'End'])
+            
+            # Convert ngày tháng
             df['Start'] = pd.to_datetime(df['Start'], errors='coerce')
             df['End'] = pd.to_datetime(df['End'], errors='coerce')
+            
+            # Lọc lỗi ngày tháng
             df = df[df['Start'].dt.year > 1900]
             df = df[df['End'].dt.year > 1900]
 
@@ -49,40 +53,39 @@ if uploaded_file is not None:
             # Đảo ngược để task đầu tiên lên trên cùng
             df = df.iloc[::-1].reset_index(drop=True)
             
-            # --- 2. VẼ BIỂU ĐỒ THEO YÊU CẦU MỚI ---
-            # Dùng Graph Objects để tùy biến vị trí chữ tốt hơn
+            # --- 2. VẼ BIỂU ĐỒ ---
             fig = go.Figure()
-
-            # Màu sắc mặc định
             colors = px.colors.qualitative.Plotly
 
-            # Duyệt qua từng dòng để vẽ Bar và Chữ
             for i, row in df.iterrows():
-                # Chọn màu (dựa theo Lead hoặc màu ngẫu nhiên)
                 color_idx = i % len(colors)
                 bar_color = colors[color_idx]
+                
+                # Tính độ dài (duration)
+                duration = (row['End'] - row['Start']).days
+                # Nếu duration = 0 (làm trong ngày) thì để tối thiểu là 1 ngày để hiện lên biểu đồ
+                if duration == 0: duration = 1
 
                 # 1. Vẽ Thanh Bar (Nằm dưới)
                 fig.add_trace(go.Bar(
-                    x=[(row['End'] - row['Start']).days], # Độ dài
-                    y=[i], # Vị trí dòng
-                    base=[row['Start']], # Điểm bắt đầu
-                    orientation='h', # Nằm ngang
+                    x=[duration], 
+                    y=[i], 
+                    base=[row['Start']], 
+                    orientation='h', 
                     marker_color=bar_color,
                     name=row['Task_Label'],
-                    hovertemplate=f"<b>{row['Task_Label']}</b><br>Bắt đầu: {row['Start'].date()}<br>Kết thúc: {row['End'].date()}<extra></extra>",
+                    hovertemplate=f"<b>{row['Task_Label']}</b><br>Start: {row['Start'].date()}<br>End: {row['End'].date()}<extra></extra>",
                     showlegend=False,
-                    height=0.4 # Độ dày của thanh bar (nhỏ lại để nhường chỗ cho chữ)
+                    width=0.4 # ĐÃ SỬA: Dùng 'width' thay vì 'height' để chỉnh độ dày thanh bar
                 ))
 
                 # 2. Vẽ Tên Task (Nằm trên Bar)
-                # Ta dùng Scatter dạng text đặt ngay phía trên thanh Bar
                 fig.add_trace(go.Scatter(
-                    x=[row['Start']], # Chữ bắt đầu ngay đầu thanh Bar
-                    y=[i + 0.35], # Đẩy chữ lên trên thanh bar một chút (offset trục Y)
-                    text=[f"<b>{row['Task_Label']}</b>"], # Nội dung chữ (in đậm)
+                    x=[row['Start']], 
+                    y=[i + 0.35], # Đẩy chữ lên trên thanh bar
+                    text=[f"<b>{row['Task_Label']}</b>"], 
                     mode="text",
-                    textposition="middle right", # Căn lề
+                    textposition="middle right", 
                     textfont=dict(size=13, color="black"),
                     showlegend=False,
                     hoverinfo='skip'
@@ -90,35 +93,34 @@ if uploaded_file is not None:
 
             # --- 3. TINH CHỈNH GIAO DIỆN ---
             fig.update_layout(
-                height=60 * len(df) + 100, # Tự động chỉnh chiều cao tổng thể
+                height=50 * len(df) + 150, # Chiều cao tự động
                 xaxis=dict(
-                    side='top', # Ngày tháng nằm trên cùng
+                    side='top', 
                     tickformat="%d-%m",
                     gridcolor='lightgrey',
-                    title=""
                 ),
                 yaxis=dict(
-                    showticklabels=False, # Ẩn nhãn trục Y bên trái đi (vì đã đưa chữ vào trong rồi)
+                    showticklabels=False, # Ẩn trục Y bên trái
                     showgrid=False,
-                    range=[-1, len(df)] # Căn chỉnh khoảng cách trục Y
+                    range=[-0.5, len(df)]
                 ),
                 plot_bgcolor='white',
-                margin=dict(l=20, r=20, t=100, b=20), # Căn lề
-                bargap=0.5 # Khoảng cách giữa các dòng task rộng ra để chứa chữ
+                margin=dict(l=20, r=20, t=100, b=20),
+                bargap=0.0 # Reset khoảng cách mặc định để kiểm soát thủ công tốt hơn
             )
             
-            # Thêm các đường kẻ ngang mờ để phân cách các dòng task
+            # Kẻ dòng phân cách mờ
             for i in range(len(df)):
                 fig.add_shape(type="line",
                     x0=df['Start'].min(), y0=i - 0.5, x1=df['End'].max(), y1=i - 0.5,
-                    line=dict(color="lightgrey", width=1, dash="dot"),
+                    line=dict(color="#eeeeee", width=1),
                     layer="below"
                 )
 
             st.plotly_chart(fig, use_container_width=True)
             
             with st.expander("Xem dữ liệu chi tiết"):
-                st.dataframe(df.iloc[::-1]) # Show bảng theo thứ tự xuôi
+                st.dataframe(df.iloc[::-1])
 
     except Exception as e:
-        st.error(f"Lỗi: {e}")
+        st.error(f"Lỗi chi tiết: {e}")
