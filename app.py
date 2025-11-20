@@ -2,11 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import numpy as np
 
 st.set_page_config(page_title="Kế hoạch tổng quan", layout="wide")
 
-# CSS
 st.markdown("""
 <style>
     .main-title {
@@ -23,34 +21,112 @@ st.markdown("""
 
 st.markdown('<div class="main-title">Kế hoạch tổng quan</div>', unsafe_allow_html=True)
 
-uploaded_file = st.file_uploader("📁 Upload file Excel", type=['xlsx'])
+# Sidebar
+st.sidebar.header("⚙️ Nguồn dữ liệu")
+data_source = st.sidebar.radio("Chọn nguồn:", ["📊 Google Sheets", "📁 Upload Excel"])
 
-if uploaded_file:
+df_data = None
+
+if data_source == "📊 Google Sheets":
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("""
+    ### 📝 Cách lấy link:
+    
+    **Option 1: Publish to web**
+    1. Mở Google Sheet
+    2. **File** → **Share** → **Publish to web**
+    3. Chọn sheet, format: **CSV**
+    4. Click **Publish**, copy link
+    
+    **Option 2: Make public**
+    1. Click **Share** → **Anyone with the link**
+    2. Copy URL từ thanh địa chỉ
+    3. App sẽ tự chuyển đổi
+    """)
+    
+    sheets_url = st.text_input(
+        "🔗 Nhập Google Sheets URL:",
+        placeholder="https://docs.google.com/spreadsheets/d/.../edit hoặc /export?format=csv",
+        help="URL có thể là link edit hoặc published CSV"
+    )
+    
+    if sheets_url and st.button("🔄 Load dữ liệu", type="primary"):
+        try:
+            with st.spinner("Đang tải từ Google Sheets..."):
+                # Chuyển đổi URL
+                if "/edit" in sheets_url or "gid=" in sheets_url:
+                    if "/d/" in sheets_url:
+                        sheet_id = sheets_url.split("/d/")[1].split("/")[0]
+                        # Extract gid if present
+                        gid = "0"
+                        if "gid=" in sheets_url:
+                            gid = sheets_url.split("gid=")[1].split("&")[0].split("#")[0]
+                        sheets_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
+                        st.info(f"📝 Đã chuyển đổi URL")
+                
+                df = pd.read_csv(sheets_url, header=None)
+                
+                # Tìm header
+                header_row = None
+                for i in range(min(20, len(df))):
+                    if df.iloc[i, 0] == 'WBS' or str(df.iloc[i, 0]).strip() == 'WBS':
+                        header_row = i
+                        break
+                
+                if header_row is not None:
+                    df_data = pd.read_csv(sheets_url, header=header_row)
+                    # Lấy 9 cột đầu
+                    if len(df_data.columns) >= 9:
+                        df_data = df_data.iloc[:, :9]
+                    df_data.columns = ['WBS', 'Task', 'Lead', 'Start', 'End', 'Cal_Days', 'Percent_Done', 'Work_Days', 'Days_Done']
+                    st.success(f"✅ Đã tải {len(df_data)} dòng từ Google Sheets!")
+                else:
+                    st.error("❌ Không tìm thấy cột 'WBS'. Kiểm tra lại Google Sheet!")
+                    
+        except Exception as e:
+            st.error(f"❌ Lỗi: {str(e)}")
+            st.info("💡 Đảm bảo Google Sheet đã được share public hoặc published!")
+
+else:
+    uploaded_file = st.file_uploader("📁 Upload file Excel (.xlsx)", type=['xlsx'])
+    
+    if uploaded_file:
+        try:
+            df = pd.read_excel(uploaded_file, header=None)
+            
+            header_row = None
+            for i in range(min(20, len(df))):
+                if df.iloc[i, 0] == 'WBS':
+                    header_row = i
+                    break
+            
+            if header_row is not None:
+                df_data = pd.read_excel(uploaded_file, header=header_row)
+                if len(df_data.columns) >= 9:
+                    df_data = df_data.iloc[:, :9]
+                df_data.columns = ['WBS', 'Task', 'Lead', 'Start', 'End', 'Cal_Days', 'Percent_Done', 'Work_Days', 'Days_Done']
+                st.success(f"✅ Đã tải {len(df_data)} dòng từ Excel!")
+        except Exception as e:
+            st.error(f"❌ Lỗi: {str(e)}")
+
+# Vẽ biểu đồ
+if df_data is not None:
     try:
-        df = pd.read_excel(uploaded_file, header=None)
+        df_data['Start'] = pd.to_datetime(df_data['Start'], errors='coerce')
+        df_data['End'] = pd.to_datetime(df_data['End'], errors='coerce')
+        df_data = df_data.dropna(subset=['Start', 'End'])
         
-        header_row = None
-        for i in range(len(df)):
-            if df.iloc[i, 0] == 'WBS':
-                header_row = i
-                break
-        
-        if header_row:
-            df_data = pd.read_excel(uploaded_file, header=header_row)
-            df_data.columns = ['WBS', 'Task', 'Lead', 'Start', 'End', 'Cal_Days', 'Percent_Done', 'Work_Days', 'Days_Done']
-            
-            df_data['Start'] = pd.to_datetime(df_data['Start'], errors='coerce')
-            df_data['End'] = pd.to_datetime(df_data['End'], errors='coerce')
-            df_data = df_data.dropna(subset=['Start', 'End'])
-            
+        if len(df_data) == 0:
+            st.error("❌ Không có dữ liệu hợp lệ với ngày Start/End")
+        else:
             # Classify
             def classify_task(task):
                 t = str(task).lower()
-                if any(k in t for k in ['khảo sát', 'ux', 'ui', 'hợp đồng']):
+                if any(k in t for k in ['khảo sát', 'ux', 'ui', 'hợp đồng', 'giới thiệu', 'kick', 'timeline']):
                     return 'CM'
-                elif any(k in t for k in ['dln', 'số dư', 'accounting']):
+                elif any(k in t for k in ['dln', 'số dư', 'accounting', 'ifrs', 'chuẩn hóa', 'bctc']):
                     return 'IFRS & Accounting Data Review'
-                elif any(k in t for k in ['phát triển', 'uat', 'đào tạo']):
+                elif any(k in t for k in ['phát triển', 'uat', 'đào tạo', 'pilot', 'vận hành', 'lập trình', 'tổ chức']):
                     return 'SAP'
                 else:
                     return 'NonSAP'
@@ -93,7 +169,7 @@ if uploaded_file:
                         y=[y, y],
                         mode='lines',
                         line=dict(color=colors[cat], width=20),
-                        hovertext=row['Task'],
+                        hovertemplate=f"<b>{row['Task']}</b><br>Start: {row['Start'].strftime('%d/%m/%Y')}<br>End: {row['End'].strftime('%d/%m/%Y')}<extra></extra>",
                         showlegend=False
                     ))
                     fig.add_trace(go.Scatter(
@@ -169,10 +245,10 @@ if uploaded_file:
             lx = min_date - timedelta(days=20)
             ly = max_y * 0.3
             for i, (n, c) in enumerate(colors.items()):
-                y = ly - i*2
-                fig.add_shape(type="line", x0=lx, x1=lx + timedelta(days=10), y0=y, y1=y,
+                y_pos = ly - i*2
+                fig.add_shape(type="line", x0=lx, x1=lx + timedelta(days=10), y0=y_pos, y1=y_pos,
                             line=dict(color=c, width=10))
-                fig.add_annotation(x=lx, y=y-0.5, text=n, showarrow=False,
+                fig.add_annotation(x=lx, y=y_pos-0.5, text=n, showarrow=False,
                                  font=dict(size=10), xanchor='left')
             
             # Go-live
@@ -205,20 +281,24 @@ if uploaded_file:
             
             st.info("💡 Click nút 📷 trên biểu đồ để download PNG")
             
+            # Stats
+            st.markdown("---")
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("📋 Tasks", len(df_data))
             col2.metric("⏱️ Thời gian", f"{(max_date-min_date).days} ngày")
             col3.metric("🚀 Bắt đầu", min_date.strftime('%d/%m/%Y'))
             col4.metric("🏁 Kết thúc", max_date.strftime('%d/%m/%Y'))
             
-            with st.expander("📊 Chi tiết"):
+            # Data table
+            with st.expander("📊 Chi tiết Tasks"):
                 d = df_data[['WBS', 'Task', 'Start', 'End', 'Category']].copy()
                 d['WBS'] = d['WBS'].astype(str)
                 d['Start'] = d['Start'].dt.strftime('%d/%m/%Y')
                 d['End'] = d['End'].dt.strftime('%d/%m/%Y')
                 st.dataframe(d, height=400)
-    
+                
     except Exception as e:
-        st.error(f"❌ Lỗi: {str(e)}")
+        st.error(f"❌ Lỗi khi xử lý: {str(e)}")
+
 else:
-    st.info("📁 Upload file Excel để tạo biểu đồ")
+    st.info("👆 Chọn nguồn dữ liệu từ sidebar")
